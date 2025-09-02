@@ -1,6 +1,10 @@
 #ifndef SESSIONMANAGER_H
 #define SESSIONMANAGER_H
 
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+
 #include <iostream>
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
@@ -10,6 +14,7 @@
 #include <mutex>
 #include <thread>
 #include <set>
+#include <iostream>
 
 
 namespace beast = boost::beast;
