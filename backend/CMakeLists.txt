@@ -11,7 +11,7 @@ if(NOT Boost_FOUND)
   message(FATAL_ERROR "Boost not found. Make sure you used vcpkg toolchain or integrated vcpkg.")
 endif()
 
-add_executable(server server.cpp)
+add_executable(server server.cpp) 
 
 # Include Boost headers
 target_include_directories(server PRIVATE ${Boost_INCLUDE_DIRS})
