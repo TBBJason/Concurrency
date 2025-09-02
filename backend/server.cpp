@@ -1,28 +1,31 @@
 #include <iostream>
 #include <boost/asio.hpp>
+#include <boost/beast.hpp>
+#include <boost/beast/websocket.hpp>
+#include <vector>
+#include <memory>
+#include <mutex>
+#include <set>
+
+namespace beast = boost::beast;
+namespace websocket = beast::websocket;
+namespace asio = boost::asio;
+using tcp = asio::ip::tcp;
+
+
+class SessionManager { 
+public:
+    void add(std::shared_ptr<websocket::stream<tcp::socket>> session) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        sessions_.insert(session);
+    }    
+private:
+    std::set<std::shared_ptr<websocket::stream<tcp::socket>>> sessions_;
+    std::mutex mutex_;
+};
+
 
 int main() {
-    try {
-        boost::asio::io_context io_context;
-
-        // create an acceptor that listens on port 3333 on IPv4
-        boost::asio::ip::tcp::acceptor acceptor(
-            io_context,
-            boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 3333)
-        );
-
-        std::cout << "Listening on port 3333...\n";
-
-        // accept one connection (blocking)
-        boost::asio::ip::tcp::socket socket(io_context);
-        acceptor.accept(socket);
-
-        std::string msg = "Hello from Boost.Asio\n";
-        boost::asio::write(socket, boost::asio::buffer(msg));
-
-    } catch (std::exception& e) {
-        std::cerr << "Exception: " << e.what() << "\n";
-        return 1;
-    }
+    std::cout<< "everything compiled okay";
     return 0;
 }
