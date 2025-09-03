@@ -3,7 +3,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git curl ninja-build pkg-config ca-certificates unzip wget zip tar \
-    libssl-dev libsqlite3-dev && rm -rf /var/lib/apt/lists/*
+    libssl-dev libsqlite3-dev libboost-dev libboost-system-dev libboost-thread-dev && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt
 RUN git clone https://github.com/microsoft/vcpkg.git /opt/vcpkg

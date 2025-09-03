@@ -1,5 +1,6 @@
 #include "database.h"
 #include <iostream>
+#include <algorithm>
 
 Database::Database(const std::string& path) : path_(path), db_(nullptr){}
 Database::~Database() {
