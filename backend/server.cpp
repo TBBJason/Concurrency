@@ -51,6 +51,8 @@ int main() {
         }
         
         // Create an acceptor that listens on port 8080
+        // should create the int port and the PORT environment here
+
         tcp::acceptor acceptor(io_context, {tcp::v4(), 8080});
         std::cout << "WebSocket server listening on port 8080..." << std::endl;
         
