@@ -1,7 +1,9 @@
 #include <iostream>
 #include "sessionmanager.h"
 #include "database.h"
-void do_session(tcp::socket socket, SessionManager& manager) {
+
+
+void do_session(tcp::socket socket, SessionManager& manager, Database& db) {
     try {
         // creating a websocket
         auto ws = std::make_shared<websocket::stream<tcp::socket>>(std::move(socket));
@@ -9,8 +11,12 @@ void do_session(tcp::socket socket, SessionManager& manager) {
         ws->accept();
 
         manager.add(ws);
-
         std::cout << "New client connected";
+
+        auto recent = db.get_recent_messages(100);
+        for (auto& m : recent) {
+            ws->write(net::buffer(m.text));
+        }
 
         beast::flat_buffer buffer;
         while (true) {
@@ -18,6 +24,8 @@ void do_session(tcp::socket socket, SessionManager& manager) {
 
             std::string message = beast::buffers_to_string(buffer.data());
             std::cout << "Receieved: " << message << std::endl;
+
+            db.insert_message(message, false);
 
             manager.broadcast(message);
             buffer.consume(buffer.size());
@@ -35,6 +43,12 @@ int main() {
     try {
         net::io_context io_context;
         SessionManager session_manager;
+
+        Database db("messages.db");
+        if (!db.open()) {
+            std::cerr << "Unable to open database; exiting now";
+            return 1;
+        }
         
         // Create an acceptor that listens on port 8080
         tcp::acceptor acceptor(io_context, {tcp::v4(), 8080});
@@ -47,9 +61,9 @@ int main() {
             
             // Handle the connection in a separate thread
             std::thread(
-                do_session, 
-                std::move(socket), 
-                std::ref(session_manager)
+                [sock = std::move(socket), &session_manager, &db]() mutable {
+                    do_session(std::move(sock), session_manager, db);
+                }
             ).detach();
         }
     } catch (std::exception const& e) {
