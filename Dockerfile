@@ -1,13 +1,16 @@
 # Build stage for backend
 FROM ubuntu:22.04 AS backend-builder
 
-# Install system dependencies
+# Install system dependencies including those needed for vcpkg
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     curl \
     git \
     libssl-dev \
+    zip \
+    unzip \
+    tar \
     && rm -rf /var/lib/apt/lists/*
 
 # Install vcpkg
@@ -53,7 +56,4 @@ RUN useradd -m myapp
 USER myapp
 
 # Heroku uses dynamic port binding
-EXPOSE $PORT
-
-# Start the server - Heroku will set the PORT environment variable
-CMD ["/app/server"]
+CMD /app/server
