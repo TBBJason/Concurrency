@@ -1,59 +1,70 @@
-# Build stage for backend
+# ---------- Backend builder ----------
 FROM ubuntu:22.04 AS backend-builder
+ARG DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies including those needed for vcpkg
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    curl \
-    git \
-    libssl-dev \
-    zip \
-    unzip \
-    tar \
-    && rm -rf /var/lib/apt/lists/*
+# build deps (add more -dev packages if your CMake needs them)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git curl ninja-build pkg-config ca-certificates unzip wget \
+    libssl-dev libsqlite3-dev && rm -rf /var/lib/apt/lists/*
 
-# Install vcpkg
+# install vcpkg (optional; remove toolchain usage if you don't use vcpkg)
 WORKDIR /opt
-RUN git clone https://github.com/Microsoft/vcpkg.git
+RUN git clone https://github.com/microsoft/vcpkg.git /opt/vcpkg
 RUN /opt/vcpkg/bootstrap-vcpkg.sh
 
-# Copy backend code
-WORKDIR /app
-COPY backend/ .
+ENV VCPKG_ROOT=/opt/vcpkg
+ENV PATH="${VCPKG_ROOT}:${PATH}"
 
-# Build the project
-RUN mkdir build && cd build && \
-    cmake .. -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake && \
-    cmake --build . --config Release
+# Copy backend source into predictable path
+WORKDIR /src/backend
+COPY backend/ /src/backend/
 
-# Build stage for frontend
+# configure, build and install into /opt/app
+# using -S/-B style so path expectations are explicit
+RUN mkdir -p /src/backend/build && \
+    cmake -S /src/backend -B /src/backend/build \
+      -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
+      -DCMAKE_BUILD_TYPE=Release || ( \
+        echo "==== CMake configure failed ====" && \
+        test -f /src/backend/build/CMakeFiles/CMakeError.log && sed -n '1,500p' /src/backend/build/CMakeFiles/CMakeError.log || true && \
+        false \
+      )
+
+RUN cmake --build /src/backend/build --config Release -- -j$(nproc) || ( \
+        echo "==== Build failed ====" && false \
+      )
+
+# install(TARGETS ...) should place runtime binary under /opt/app (e.g. /opt/app/bin)
+RUN cmake --install /src/backend/build --prefix /opt/app
+
+# ---------- Frontend builder ----------
 FROM node:18 AS frontend-builder
-
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm install
+RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
-# Final runtime image
-FROM ubuntu:22.04
+# ---------- Final runtime image ----------
+FROM ubuntu:22.04 AS runtime
+ARG DEBIAN_FRONTEND=noninteractive
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    libssl3 \
-    libsqlite3-0 \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3 libsqlite3-0 && rm -rf /var/lib/apt/lists/*
 
-# Copy backend binary
-COPY --from=backend-builder /app/build/server /app/server
+# copy installed backend artifacts (from cmake --install)
+COPY --from=backend-builder /opt/app /app
 
-# Copy frontend build files
+# copy frontend static files
 COPY --from=frontend-builder /app/frontend/build /app/static
 
-# Create non-root user for security
-RUN useradd -m myapp
+# create non-root user
+RUN useradd -m myapp || true
 USER myapp
 
-# Heroku uses dynamic port binding
-CMD /app/server
+# expose default (Heroku will provide $PORT). Your server must read PORT env var.
+EXPOSE  ${PORT:-8080}
+
+# default command - adjust path if your installed binary is different
+# Common install location when using install(TARGETS server RUNTIME DESTINATION bin) -> /app/bin/server
+CMD ["/app/bin/server"]
