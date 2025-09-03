@@ -65,5 +65,6 @@
         "xmemory": "cpp",
         "xtr1common": "cpp",
         "xutility": "cpp"
-    }
+    },
+    "cmake.sourceDirectory": "C:/Users/wujas/Desktop/LearningC++/Concurrency/backend"
 }
