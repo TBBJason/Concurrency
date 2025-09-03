@@ -16,6 +16,9 @@ if(NOT Boost_FOUND)
   message(FATAL_ERROR "Boost not found. Make sure vcpkg toolchain is configured if you installed Boost via vcpkg.")
 endif()
 
+# Find SQLite3
+find_package(SQLite3 REQUIRED)
+
 # Recommended: find threads portably
 find_package(Threads REQUIRED)
 
@@ -27,6 +30,9 @@ add_executable(server
 
 # Include Boost headers
 target_include_directories(server PRIVATE ${Boost_INCLUDE_DIRS})
+
+# Link SQLite3
+target_link_libraries(server PRIVATE SQLite::SQLite3)
 
 # Define Windows target macro so Asio/Beast compiles cleanly
 if(WIN32)

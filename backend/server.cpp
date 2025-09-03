@@ -1,6 +1,6 @@
 #include <iostream>
 #include "sessionmanager.h"
-
+#include "database.h"
 void do_session(tcp::socket socket, SessionManager& manager) {
     try {
         // creating a websocket
