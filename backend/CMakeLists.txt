@@ -22,6 +22,7 @@ find_package(Threads REQUIRED)
 add_executable(server
   server.cpp
   sessionmanager.cpp
+  database.cpp
 )
 
 # Include Boost headers

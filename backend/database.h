@@ -36,10 +36,9 @@ public:
 private:
     bool ensure_table();
 
-    std::string_path_;
-    sqlite3*db_ = nullptr;
+    std::string path_;
+    sqlite3* db_ = nullptr;
     std::mutex mtx_;
-
-}
+};
 
 #endif
