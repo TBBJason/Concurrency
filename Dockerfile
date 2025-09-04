@@ -1,27 +1,54 @@
+# syntax=docker/dockerfile:1
+
+# ---------- Builder ----------
 FROM ubuntu:22.04 AS backend-builder
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git curl ninja-build pkg-config ca-certificates unzip wget zip tar \
-    libssl-dev libsqlite3-dev libboost-dev libboost-system-dev libboost-thread-dev && rm -rf /var/lib/apt/lists/*
+    build-essential cmake git curl pkg-config ninja-build \
+    ca-certificates zip unzip tar libssl-dev libsqlite3-dev \
+  && rm -rf /var/lib/apt/lists/*
 
+# vcpkg
 WORKDIR /opt
-RUN git clone https://github.com/microsoft/vcpkg.git /opt/vcpkg
-RUN /opt/vcpkg/bootstrap-vcpkg.sh
-RUN /opt/vcpkg/vcpkg install boost-thread boost-system boost-filesystem --triplet x64-linux
-
-
+RUN git clone https://github.com/microsoft/vcpkg.git /opt/vcpkg \
+ && /opt/vcpkg/bootstrap-vcpkg.sh
 ENV VCPKG_ROOT=/opt/vcpkg
-ENV PATH="${VCPKG_ROOT}:${PATH}"
+ENV VCPKG_DEFAULT_TRIPLET=x64-linux
 
-# Copy backend source into predictable path
+# Warm up vcpkg (manifest mode) for better caching
 WORKDIR /src/backend
-COPY backend/ /src/backend/
+COPY backend/vcpkg.json /src/backend/vcpkg.json
+RUN cmake -S /src/backend -B /tmp/vcpkgwarmup \
+    -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
+    -DVCPKG_FEATURE_FLAGS=manifests \
+  && rm -rf /tmp/vcpkgwarmup
 
-# Configure, build and install
-RUN mkdir -p /src/backend/build && \
-    cmake -S /src/backend -B /src/backend/build \
+# Build + install to a clean prefix
+COPY backend/ /src/backend/
+RUN cmake -S /src/backend -B /src/backend/build \
       -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
-      -DCMAKE_BUILD_TYPE=Release
-RUN cmake --build /src/backend/build --config Release -- -j$(nproc)
-RUN cmake --install /src/backend/build --prefix /opt/app
+      -DVCPKG_FEATURE_FLAGS=manifests \
+      -DCMAKE_BUILD_TYPE=Release \
+  && cmake --build /src/backend/build --config Release -- -j$(nproc) \
+  && cmake --install /src/backend/build --prefix /opt/app
+
+# ---------- Runtime ----------
+FROM ubuntu:22.04 AS runtime
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libsqlite3-0 \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=backend-builder /opt/app /app
+
+# Non-root user
+RUN useradd -m appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Heroku provides $PORT (Expose is optional)
+EXPOSE 8080
+
+# This is what Heroku will run
+CMD ["/app/bin/server"]

@@ -2,4 +2,4 @@ build:
   docker:
     web: Dockerfile
 run:
-  web: /app/server
+  web: /app/bin/server

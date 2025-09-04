@@ -1,6 +1,7 @@
 #include <iostream>
 #include "sessionmanager.h"
 #include "database.h"
+#include <cstdlib>
 
 
 void do_session(tcp::socket socket, SessionManager& manager, Database& db) {
@@ -53,11 +54,13 @@ int main() {
         // Create an acceptor that listens on port 8080
         // should create the int port and the PORT environment here
 
-        const char* env_port = std::getenv("PORT");
-        int port = env_port ? std::atoi(env_port) : 8080;
+        int port = []{
+        const char* p = std::getenv("PORT");
+        return p ? std::atoi(p) : 8080;
+        }();
 
         tcp::acceptor acceptor(io_context, {tcp::v4(), port});
-        std::cout << "WebSocket server listening on port 8080..." << std::endl;
+        std::cout << "WebSocket server listening on port" <<  port << "..." << std::endl;
         
         while (true) {
             // Accept a new connection
