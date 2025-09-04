@@ -14,6 +14,10 @@ add_executable(server
   database.cpp
 )
 
+if (WIN32)
+  # Target Windows 7 compatibility. Change to 0x0A00 for Windows 10 if you prefer.
+  target_compile_definitions(server PRIVATE _WIN32_WINNT=0x0601)
+endif()
 # Ensure Boost headers (for header-only asio) are visible
 target_include_directories(server PRIVATE ${Boost_INCLUDE_DIRS})
 

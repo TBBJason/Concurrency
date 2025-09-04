@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# ---------- Builder ----------
+# ---------- Backend builder ----------
 FROM ubuntu:22.04 AS backend-builder
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -16,17 +16,11 @@ RUN git clone https://github.com/microsoft/vcpkg.git /opt/vcpkg \
 ENV VCPKG_ROOT=/opt/vcpkg
 ENV VCPKG_DEFAULT_TRIPLET=x64-linux
 
-# Copy backend *first* so cmake can see CMakeLists.txt and vcpkg.json
+# Copy backend source
 WORKDIR /src/backend
 COPY backend/ /src/backend/
 
-# Warm up vcpkg (manifest mode) for better caching
-RUN cmake -S /src/backend -B /tmp/vcpkgwarmup \
-    -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
-    -DVCPKG_FEATURE_FLAGS=manifests \
-  && rm -rf /tmp/vcpkgwarmup
-
-# Build + install to a clean prefix
+# Build backend and install into /opt/app
 RUN cmake -S /src/backend -B /src/backend/build \
       -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
       -DVCPKG_FEATURE_FLAGS=manifests \
@@ -34,21 +28,32 @@ RUN cmake -S /src/backend -B /src/backend/build \
   && cmake --build /src/backend/build --config Release -- -j$(nproc) \
   && cmake --install /src/backend/build --prefix /opt/app
 
+# ---------- Frontend builder ----------
+FROM node:18 AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+# adjust to your frontend build command (npm run build is common)
+RUN npm run build
+
 # ---------- Runtime ----------
 FROM ubuntu:22.04 AS runtime
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libsqlite3-0 \
-  && rm -rf /var/lib/apt/lists/*
+    ca-certificates libsqlite3-0 && rm -rf /var/lib/apt/lists/*
 
+# Copy backend installed artifacts to /app
 WORKDIR /app
 COPY --from=backend-builder /opt/app /app
+
+# Copy frontend build output into /app/static
+# (adjust path if your frontend build outputs to a different folder)
+COPY --from=frontend-builder /app/frontend/build /app/static
 
 # Non-root user
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
 
-# Heroku provides $PORT (Expose is optional)
 EXPOSE 8080
-
 CMD ["/app/bin/server"]
