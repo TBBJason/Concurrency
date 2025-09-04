@@ -56,7 +56,7 @@ int main() {
         const char* env_port = std::getenv("PORT");
         int port = env_port ? std::atoi(env_port) : 8080;
 
-        tcp::acceptor acceptor(io_context, {tcp::v4(), 8080});
+        tcp::acceptor acceptor(io_context, {tcp::v4(), port});
         std::cout << "WebSocket server listening on port 8080..." << std::endl;
         
         while (true) {
