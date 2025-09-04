@@ -16,16 +16,17 @@ RUN git clone https://github.com/microsoft/vcpkg.git /opt/vcpkg \
 ENV VCPKG_ROOT=/opt/vcpkg
 ENV VCPKG_DEFAULT_TRIPLET=x64-linux
 
-# Warm up vcpkg (manifest mode) for better caching
+# Copy backend *first* so cmake can see CMakeLists.txt and vcpkg.json
 WORKDIR /src/backend
-COPY backend/vcpkg.json /src/backend/vcpkg.json
+COPY backend/ /src/backend/
+
+# Warm up vcpkg (manifest mode) for better caching
 RUN cmake -S /src/backend -B /tmp/vcpkgwarmup \
     -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
     -DVCPKG_FEATURE_FLAGS=manifests \
   && rm -rf /tmp/vcpkgwarmup
 
 # Build + install to a clean prefix
-COPY backend/ /src/backend/
 RUN cmake -S /src/backend -B /src/backend/build \
       -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
       -DVCPKG_FEATURE_FLAGS=manifests \
@@ -50,5 +51,4 @@ USER appuser
 # Heroku provides $PORT (Expose is optional)
 EXPOSE 8080
 
-# This is what Heroku will run
 CMD ["/app/bin/server"]
