@@ -49,7 +49,7 @@ COPY --from=backend-builder /opt/app /app
 
 # Copy frontend build output into /app/static
 # (adjust path if your frontend build outputs to a different folder)
-COPY --from=frontend-builder /app/frontend/build /app/static
+COPY --from=frontend-builder /app/frontend/dist /app/static
 
 # Non-root user
 RUN useradd -m appuser && chown -R appuser:appuser /app
