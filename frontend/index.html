@@ -87,7 +87,7 @@
   function ensureWS() {
     if (ws && ws.readyState === WebSocket.OPEN) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket("ws://localhost:8080/"); //new WebSocket(proto + '//' + location.host + '/');
+    ws = new WebSocket(proto + '//' + location.host + '/');
     ws.onopen = () => { console.log('ws open'); ws.send(JSON.stringify({type:'join', username: username, room: room})); };
     ws.onmessage = (evt) => {
       const j = JSON.parse(evt.data);
