@@ -1,13 +1,139 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + React</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Concurrency Chat Demo</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin:0; padding:0; display:flex; height:100vh; }
+    #left { width: 260px; border-right:1px solid #ddd; padding:10px; box-sizing:border-box; }
+    #main { flex:1; display:flex; flex-direction:column; }
+    #messages { flex:1; overflow:auto; padding:10px; }
+    #input { padding:8px; border-top:1px solid #ddd; display:flex; }
+    #input input { flex:1; padding:8px; margin-right:8px; }
+    .msg { margin-bottom:8px; }
+    .me { font-weight:600; }
+    .user { cursor:pointer; padding:4px 2px; border-radius:4px; }
+    .user:hover { background:#f0f0f0; }
+    #login-modal { position:fixed; left:0; right:0; top:0; bottom:0; background:rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center; }
+    #login { background:#fff; padding:20px; border-radius:6px; width:320px; }
+  </style>
+</head>
+<body>
+  <div id="left">
+    <h3>Users (room)</h3>
+    <div id="users"></div>
+    <hr/>
+    <div>
+      <strong>Instructions</strong>
+      <p>Open this URL in two browsers (or incognito) and enter 2 different usernames to demo Person 1 / Person 2.</p>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="messages"></div>
+    <div id="input">
+      <input id="text" placeholder="Type a message..." />
+      <button id="send">Send</button>
+    </div>
+  </div>
+
+  <div id="login-modal">
+    <div id="login">
+      <h3>Join chat</h3>
+      <input id="username" placeholder="Your name" style="width:100%; padding:8px; margin-bottom:8px;" />
+      <button id="join" style="width:100%; padding:8px;">Join</button>
+    </div>
+  </div>
+
+<script>
+(function(){
+  let ws;
+  let username = '';
+  const room = 'lobby';
+  const usersEl = document.getElementById('users');
+  const messagesEl = document.getElementById('messages');
+  const loginModal = document.getElementById('login-modal');
+
+  function appendMessage(user, text, ts, isPrivate=false) {
+    const el = document.createElement('div');
+    el.className = 'msg';
+    const who = document.createElement('div');
+    who.innerHTML = (user === username ? '<span class="me">You</span>' : '<strong>'+user+'</strong>') + (isPrivate ? ' <em>(private)</em>' : '');
+    const txt = document.createElement('div');
+    txt.textContent = text;
+    el.appendChild(who);
+    el.appendChild(txt);
+    messagesEl.appendChild(el);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function setUsers(list) {
+    usersEl.innerHTML = '';
+    list.forEach(u => {
+      const d = document.createElement('div');
+      d.className = 'user';
+      d.textContent = u;
+      d.onclick = () => {
+        const pm = prompt('Send private message to ' + u);
+        if (pm && pm.trim()) {
+          ws.send(JSON.stringify({type:'private', to: u, text: pm}));
+          appendMessage(username, pm, Date.now(), true);
+        }
+      };
+      usersEl.appendChild(d);
+    });
+  }
+
+  function ensureWS() {
+    if (ws && ws.readyState === WebSocket.OPEN) return;
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket("ws://localhost:8080/"); //new WebSocket(proto + '//' + location.host + '/');
+    ws.onopen = () => { console.log('ws open'); ws.send(JSON.stringify({type:'join', username: username, room: room})); };
+    ws.onmessage = (evt) => {
+      const j = JSON.parse(evt.data);
+      if (j.type === 'joined') {
+        (j.recent || []).forEach(m => appendMessage(m.username, m.text, m.ts));
+      } else if (j.type === 'message') {
+        appendMessage(j.username, j.text, j.ts);
+      } else if (j.type === 'private') {
+        appendMessage(j.username, j.text, j.ts, true);
+      } else if (j.type === 'presence') {
+        setUsers(j.users);
+      } else if (j.type === 'list') {
+        setUsers(j.users);
+      }
+    };
+    ws.onclose = () => setTimeout(() => { ws = null; }, 500);
+    ws.onerror = (e) => console.error('ws error', e);
+  }
+
+  document.getElementById('join').onclick = () => {
+    const name = document.getElementById('username').value.trim();
+    if (!name) return alert('Please enter a name');
+    username = name;
+    loginModal.style.display = 'none';
+    ensureWS();
+  };
+
+  document.getElementById('send').onclick = () => {
+    const t = document.getElementById('text');
+    const text = t.value.trim();
+    if (!text) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      alert('Not connected yet');
+      return;
+    }
+    ws.send(JSON.stringify({type:'message', text: text}));
+    appendMessage(username, text, Date.now());
+    t.value = '';
+  };
+
+  // allow Enter to send
+  document.getElementById('text').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('send').click();
+  });
+
+})();
+</script>
+</body>
 </html>
