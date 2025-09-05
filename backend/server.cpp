@@ -129,7 +129,6 @@ static bool serve_static_or_fallback(beast::tcp_stream &stream,
 void handle_connection(tcp::socket socket, SessionManager& manager, Database& db) {
     try {
         beast::flat_buffer buffer;
-        // Use tcp_stream wrapper because http and file_body want a stream
         beast::tcp_stream stream(std::move(socket));
 
         http::request<http::string_body> req;
@@ -142,46 +141,70 @@ void handle_connection(tcp::socket socket, SessionManager& manager, Database& db
             std::cerr << name << ": " << field.value() << "\n";
         }
 
-        // If not a websocket upgrade -> serve static
         if (!websocket::is_upgrade(req)) {
             serve_static_or_fallback(stream, req, "/app/static", true);
-            return; // close connection after serving
+            return;
         }
 
-        // Websocket path: create ws from underlying socket
+        // Create websocket from underlying socket and accept handshake
         auto ws = std::make_shared<websocket::stream<tcp::socket>>(stream.release_socket());
-
-        // Accept handshake
         ws->accept(req);
 
-        manager.add(ws);
-
+        // per-connection state
         std::string username;
         std::string room = "lobby";
 
-        // Message loop
+        // message loop
         beast::flat_buffer read_buf;
         for (;;) {
             ws->read(read_buf);
-            std::string raw = beast::buffers_to_string(read_buf.data());
-            read_buf.consume(read_buf.size());
 
-            json j;
-            try { j = json::parse(raw); }
-            catch (std::exception& e) {
-                std::cerr << "JSON parse error: " << e.what() << "\n";
+            // ignore non-text frames
+            if (!ws->got_text()) {
+                std::cerr << "Received non-text (binary/ping) frame — ignoring\n";
+                read_buf.consume(read_buf.size());
                 continue;
             }
 
-            std::string type = j.value("type", "");
+            // raw payload logging
+            std::string raw = beast::buffers_to_string(read_buf.data());
+            read_buf.consume(read_buf.size());
+            std::cerr << "[RAW MSG] ws=" << ws.get() << " -> " << raw << "\n";
+
+            // parse safely
+            json j;
+            try {
+                j = json::parse(raw);
+            } catch (const std::exception& e) {
+                std::cerr << "Invalid JSON (ignored): " << e.what() << " >> " << raw << "\n";
+                continue;
+            }
+            if (!j.is_object()) {
+                std::cerr << "JSON not object (ignored): " << j.dump() << "\n";
+                continue;
+            }
+
+            // ensure "type" exists and is a string
+            auto it = j.find("type");
+            if (it == j.end() || !it->is_string()) {
+                std::cerr << "Missing/invalid 'type' (ignored): " << j.dump() << "\n";
+                continue;
+            }
+            std::string type = it->get<std::string>();
+
             if (type == "join") {
-                username = j.value("username", std::string("guest"));
-                room = j.value("room", std::string("lobby"));
+                if (!j.contains("username") || !j["username"].is_string()
+                    || !j.contains("room") || !j["room"].is_string()) {
+                    std::cerr << "'join' missing fields: " << j.dump() << "\n";
+                    continue;
+                }
+                username = j["username"].get<std::string>();
+                room = j["room"].get<std::string>();
 
-                manager.set_username(ws, username);
-                manager.set_room(ws, room);
+                // register the session *now* with username+room
+                manager.add(ws, username, room);
 
-                // Fetch recent messages from DB and send joined payload
+                // send joined + recent
                 auto recent = db.get_recent_messages(room, 50);
                 json recent_json = json::array();
                 for (auto &m : recent) {
@@ -191,7 +214,6 @@ void handle_connection(tcp::socket socket, SessionManager& manager, Database& db
                         {"ts", m.ts}
                     });
                 }
-
                 json joined = {
                     {"type", "joined"},
                     {"username", username},
@@ -201,14 +223,20 @@ void handle_connection(tcp::socket socket, SessionManager& manager, Database& db
                 ws->text(true);
                 ws->write(net::buffer(joined.dump()));
 
-                // broadcast presence to room
+                // broadcast presence (dump into string for manager)
                 json pres = { {"type","presence"}, {"users", manager.list_users(room)} };
-                manager.broadcast(room, pres);
+                manager.broadcast(room, pres.dump());
 
             } else if (type == "message") {
-                std::string text = j.value("text", "");
-                if (text.empty() || username.empty()) continue;
-
+                if (!j.contains("text") || !j["text"].is_string()) {
+                    std::cerr << "'message' missing/invalid text: " << j.dump() << "\n";
+                    continue;
+                }
+                if (username.empty()) {
+                    std::cerr << "Client sent 'message' before join: " << j.dump() << "\n";
+                    continue;
+                }
+                std::string text = j["text"].get<std::string>();
                 long long ts = now_ms();
                 db.insert_message(room, username, text, ts);
 
@@ -219,35 +247,46 @@ void handle_connection(tcp::socket socket, SessionManager& manager, Database& db
                     {"text", text},
                     {"ts", ts}
                 };
-                manager.broadcast(room, out);
+                manager.broadcast(room, out.dump());
 
             } else if (type == "private") {
-                std::string to = j.value("to", "");
-                std::string text = j.value("text", "");
-                if (to.empty() || text.empty() || username.empty()) continue;
-
+                if (!j.contains("to") || !j["to"].is_string()
+                    || !j.contains("text") || !j["text"].is_string()) {
+                    std::cerr << "'private' missing fields: " << j.dump() << "\n";
+                    continue;
+                }
+                if (username.empty()) {
+                    std::cerr << "Client sent 'private' before join: " << j.dump() << "\n";
+                    continue;
+                }
+                std::string to = j["to"].get<std::string>();
+                std::string text = j["text"].get<std::string>();
                 json out = {
                     {"type", "private"},
                     {"username", username},
                     {"text", text},
                     {"ts", now_ms()}
                 };
-                // send to recipient and echo to sender
-                manager.send_to_user(to, out);
-                manager.send_to_user(username, out);
+                manager.send_to_user(to, out.dump());
+                manager.send_to_user(username, out.dump());
 
             } else if (type == "list") {
                 json out = { {"type","list"}, {"users", manager.list_users(room)} };
                 ws->text(true);
                 ws->write(net::buffer(out.dump()));
+            } else {
+                std::cerr << "Unknown type (ignored): " << type << " -> " << j.dump() << "\n";
             }
-        }
+        } // for(;;)
+
+        // unreachable here, manager.remove could be placed in exception handling
     } catch (beast::system_error const& se) {
         std::cerr << "Beast error: " << se.what() << "\n";
     } catch (std::exception const& e) {
         std::cerr << "Conn exception: " << e.what() << "\n";
     }
 }
+
 
 int main() {
     try {
