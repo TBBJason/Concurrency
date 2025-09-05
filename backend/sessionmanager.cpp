@@ -59,7 +59,7 @@ void SessionManager::broadcast(const std::string &room, const json& message) {
 
 
 bool SessionManager::send_to_user(const std::string& username, const json& message) {
-    std::lock_guard<std::mutex> lk(mutex_);
+    std::lock_guard<std::mutex> lk(mtx_);
     for (auto &ws : sockets_) {
         auto un = username_of_.find(ws);
         if (un != username_of_.end() && un->second == username) {

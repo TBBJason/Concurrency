@@ -7,10 +7,10 @@
 #include <sqlite3.h>
 
 struct ChatMessage {
-    int id;
+    std::string username;
     std::string text;
-    bool isOwn;
-    std::string timestamp; 
+    long long ts;
+    std::string room;
 };
 
 class Database {
@@ -21,18 +21,12 @@ public:
 
     // these commands remove the copy constructor
     Database(const Database&) = delete;
-    // this line removes the assignment operator
     Database& operator=(const Database&) = delete;
-    // Because of these lines, we can't assign a database the values of 
-    // another database since we deleted the command that would normally handle that
-
-
+    
     bool open();
     bool close();
-
-    bool insert_message(const std::string& text, bool isOwn);
-    std::vector<ChatMessage> get_recent_messages(int limit = 100);
-
+    std::vector<ChatMessage> get_recent_messages(const std::string &room, int limit = 100);
+    void insert_message(const std::string& room, const std::string& username, const std::string& text, long long ts);
 private:
     bool ensure_table();
 

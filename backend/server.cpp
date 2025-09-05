@@ -4,6 +4,7 @@
 #include <memory>
 #include <thread>
 #include <filesystem>
+#include <chrono>
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
@@ -11,77 +12,68 @@
 #include <boost/beast/websocket.hpp>
 #include <boost/asio.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include "sessionmanager.h"
-#include "database.h"
+#include "database.h" // your Database header
 
 namespace beast = boost::beast;
 namespace http  = beast::http;
 namespace websocket = beast::websocket;
 namespace net   = boost::asio;
 using tcp = net::ip::tcp;
+using json = nlohmann::json;
 namespace fs = std::filesystem;
 
-// simple mime type map
-static std::string mime_type(const fs::path& path) {
-    auto ext = path.extension().string();
-    if (ext == ".htm" || ext == ".html") return "text/html";
-    if (ext == ".css")  return "text/css";
-    if (ext == ".js")   return "application/javascript";
-    if (ext == ".json") return "application/json";
-    if (ext == ".png")  return "image/png";
-    if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
-    if (ext == ".svg")  return "image/svg+xml";
-    if (ext == ".txt")  return "text/plain";
-    return "application/octet-stream";
+using ws_ptr = std::shared_ptr<websocket::stream<tcp::socket>>;
+
+// Helper to get epoch ms
+inline long long now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+           std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-// Serve a static file under /app/static. If not found and `spa_fallback` true,
-// serve /app/static/index.html (useful for client-side routing).
-static bool serve_static_or_fallback(tcp::socket &socket,
-                                     const http::request<http::string_body>& req,
-                                     const std::string& root_dir = "/app/static",
-                                     bool spa_fallback = true)
+// convert beast string_view target => std::string
+static std::string sv_to_string(const beast::string_view& sv) {
+    return std::string(sv.data(), sv.size());
+}
+
+// serve static file like earlier example (returns true if handled)
+static bool serve_static_or_fallback(beast::tcp_stream &stream,
+                                    const http::request<http::string_body>& req,
+                                    const std::string& root_dir = "/app/static",
+                                    bool spa_fallback = true)
 {
     try {
-        std::string target(req.target().data(), req.target().size());
-
-        // Normalize target; don't allow .. traversal
+        std::string target = sv_to_string(req.target());
         if (target.empty() || target == "/") target = "/index.html";
-
-        // Remove query string if present
         auto qpos = target.find('?');
         if (qpos != std::string::npos) target = target.substr(0, qpos);
 
-        // Ensure the path doesn't try to escape root (basic lexical normalize)
         fs::path full = fs::path(root_dir) / fs::path(target).relative_path();
         full = full.lexically_normal();
 
-        // Basic containment check: full path must start with root_dir
         auto root_norm = fs::path(root_dir).lexically_normal().string();
         auto full_str = full.string();
         if (full_str.rfind(root_norm, 0) != 0) {
-            // path traversal attempt
             http::response<http::string_body> forbidden{http::status::forbidden, req.version()};
             forbidden.set(http::field::content_type, "text/plain");
             forbidden.body() = "Forbidden";
             forbidden.prepare_payload();
-            http::write(socket, forbidden);
+            http::write(stream.socket(), forbidden);
             return true;
         }
 
-        // If file doesn't exist and SPA fallback enabled, try index.html
         if (!fs::exists(full) || !fs::is_regular_file(full)) {
             if (spa_fallback) {
                 fs::path idx = fs::path(root_dir) / "index.html";
-                if (fs::exists(idx) && fs::is_regular_file(idx)) {
-                    full = idx;
-                } else {
-                    // not found
+                if (fs::exists(idx) && fs::is_regular_file(idx)) full = idx;
+                else {
                     http::response<http::string_body> nf{http::status::not_found, req.version()};
                     nf.set(http::field::content_type, "text/plain");
                     nf.body() = "Not found";
                     nf.prepare_payload();
-                    http::write(socket, nf);
+                    http::write(stream.socket(), nf);
                     return true;
                 }
             } else {
@@ -89,12 +81,11 @@ static bool serve_static_or_fallback(tcp::socket &socket,
                 nf.set(http::field::content_type, "text/plain");
                 nf.body() = "Not found";
                 nf.prepare_payload();
-                http::write(socket, nf);
+                http::write(stream.socket(), nf);
                 return true;
             }
         }
 
-        // Open file and stream it
         beast::error_code ec;
         http::file_body::value_type body;
         body.open(full.string().c_str(), beast::file_mode::scan, ec);
@@ -103,133 +94,189 @@ static bool serve_static_or_fallback(tcp::socket &socket,
             err.set(http::field::content_type, "text/plain");
             err.body() = std::string("File open error: ") + ec.message();
             err.prepare_payload();
-            http::write(socket, err);
+            http::write(stream.socket(), err);
             return true;
         }
 
         auto const size = body.size();
-
         http::response<http::file_body> res{
             std::piecewise_construct,
             std::make_tuple(std::move(body)),
             std::make_tuple(http::status::ok, req.version())
         };
         res.set(http::field::server, "concurrency-server");
-        res.set(http::field::content_type, mime_type(full));
+        // quick mime mapping
+        auto ext = full.extension().string();
+        if(ext == ".html") res.set(http::field::content_type, "text/html");
+        else if(ext == ".js") res.set(http::field::content_type, "application/javascript");
+        else if(ext == ".css") res.set(http::field::content_type, "text/css");
+        else res.set(http::field::content_type, "application/octet-stream");
         res.content_length(size);
-        http::write(socket, res);
+        http::write(stream.socket(), res);
         return true;
-
     } catch (std::exception const& e) {
+        beast::error_code ec;
         http::response<http::string_body> err{http::status::internal_server_error, req.version()};
         err.set(http::field::content_type, "text/plain");
         err.body() = std::string("Server error: ") + e.what();
         err.prepare_payload();
-        beast::error_code ec;
-        http::write(socket, err, ec);
+        http::write(stream.socket(), err, ec);
         return true;
     }
 }
 
-// Main session handler: accepts websocket upgrades or serves static files
-void do_session(tcp::socket socket, SessionManager& manager, Database& db) {
+
+void handle_connection(tcp::socket socket, SessionManager& manager, Database& db) {
     try {
         beast::flat_buffer buffer;
+        // Use tcp_stream wrapper because http and file_body want a stream
+        beast::tcp_stream stream(std::move(socket));
+
         http::request<http::string_body> req;
+        http::read(stream, buffer, req);
 
-        // Read the HTTP request from the socket
-        http::read(socket, buffer, req);
-
-        // Log the request line & headers for debugging
-        std::cerr << "Incoming request: " << req.method_string() << " " << req.target() << "\n";
+        std::cerr << "Incoming request: " << sv_to_string(req.method_string())
+                  << " " << sv_to_string(req.target()) << "\n";
         for (auto const& field : req) {
-            std::cerr << std::string(field.name_string()) << ": " << field.value() << "\n";
+            std::string name(field.name_string().data(), field.name_string().size());
+            std::cerr << name << ": " << field.value() << "\n";
         }
 
-        // If it's not a websocket upgrade, serve static files (or SPA)
+        // If not a websocket upgrade -> serve static
         if (!websocket::is_upgrade(req)) {
-            serve_static_or_fallback(socket, req, "/app/static", /*spa_fallback=*/true);
-            // After serving HTTP, close connection (function handled response)
-            return;
+            serve_static_or_fallback(stream, req, "/app/static", true);
+            return; // close connection after serving
         }
 
-        // It's a websocket upgrade; construct websocket stream from the socket
-        auto ws = std::make_shared<websocket::stream<tcp::socket>>(std::move(socket));
+        // Websocket path: create ws from underlying socket
+        auto ws = std::make_shared<websocket::stream<tcp::socket>>(stream.release_socket());
 
-        // Accept the websocket handshake (this sends the 101 response with Connection: Upgrade)
+        // Accept handshake
         ws->accept(req);
 
         manager.add(ws);
-        std::cout << "New client connected\n";
 
-        // Send recent messages (text frames)
-        auto recent = db.get_recent_messages(100);
-        for (auto& m : recent) {
-            ws->text(true);
-            ws->write(net::buffer(m.text));
-        }
+        std::string username;
+        std::string room = "lobby";
 
-        // WebSocket message loop
+        // Message loop
         beast::flat_buffer read_buf;
         for (;;) {
             ws->read(read_buf);
-
-            std::string message = beast::buffers_to_string(read_buf.data());
-            std::cout << "Received: " << message << std::endl;
-
-            db.insert_message(message, false);
-            manager.broadcast(message);
-
-            // consume what we read
+            std::string raw = beast::buffers_to_string(read_buf.data());
             read_buf.consume(read_buf.size());
-        }
 
-    } catch (beast::system_error const& se) {
-        if (se.code() != websocket::error::closed) {
-            std::cerr << "Error (beast): " << se.what() << std::endl;
-        } else {
-            std::cerr << "Connection closed by client\n";
+            json j;
+            try { j = json::parse(raw); }
+            catch (std::exception& e) {
+                std::cerr << "JSON parse error: " << e.what() << "\n";
+                continue;
+            }
+
+            std::string type = j.value("type", "");
+            if (type == "join") {
+                username = j.value("username", std::string("guest"));
+                room = j.value("room", std::string("lobby"));
+
+                manager.set_username(ws, username);
+                manager.set_room(ws, room);
+
+                // Fetch recent messages from DB and send joined payload
+                auto recent = db.get_recent_messages(room, 50);
+                json recent_json = json::array();
+                for (auto &m : recent) {
+                    recent_json.push_back({
+                        {"username", m.username},
+                        {"text", m.text},
+                        {"ts", m.ts}
+                    });
+                }
+
+                json joined = {
+                    {"type", "joined"},
+                    {"username", username},
+                    {"room", room},
+                    {"recent", recent_json}
+                };
+                ws->text(true);
+                ws->write(net::buffer(joined.dump()));
+
+                // broadcast presence to room
+                json pres = { {"type","presence"}, {"users", manager.list_users(room)} };
+                manager.broadcast(room, pres);
+
+            } else if (type == "message") {
+                std::string text = j.value("text", "");
+                if (text.empty() || username.empty()) continue;
+
+                long long ts = now_ms();
+                db.insert_message(room, username, text, ts);
+
+                json out = {
+                    {"type", "message"},
+                    {"username", username},
+                    {"room", room},
+                    {"text", text},
+                    {"ts", ts}
+                };
+                manager.broadcast(room, out);
+
+            } else if (type == "private") {
+                std::string to = j.value("to", "");
+                std::string text = j.value("text", "");
+                if (to.empty() || text.empty() || username.empty()) continue;
+
+                json out = {
+                    {"type", "private"},
+                    {"username", username},
+                    {"text", text},
+                    {"ts", now_ms()}
+                };
+                // send to recipient and echo to sender
+                manager.send_to_user(to, out);
+                manager.send_to_user(username, out);
+
+            } else if (type == "list") {
+                json out = { {"type","list"}, {"users", manager.list_users(room)} };
+                ws->text(true);
+                ws->write(net::buffer(out.dump()));
+            }
         }
+    } catch (beast::system_error const& se) {
+        std::cerr << "Beast error: " << se.what() << "\n";
     } catch (std::exception const& e) {
-        std::cerr << "Error (std): " << e.what() << std::endl;
+        std::cerr << "Conn exception: " << e.what() << "\n";
     }
 }
 
 int main() {
     try {
-        net::io_context io_context;
-        SessionManager session_manager;
-
+        net::io_context ioc{1};
+        SessionManager manager;
         Database db("messages.db");
         if (!db.open()) {
-            std::cerr << "Unable to open database; exiting now\n";
+            std::cerr << "DB open failed\n";
             return 1;
         }
 
-        // Determine port from environment (Heroku provides PORT)
         int port = [] {
             const char* p = std::getenv("PORT");
             return p ? std::atoi(p) : 8080;
         }();
 
-        // Bind acceptor to port
-        tcp::acceptor acceptor(io_context, {tcp::v4(), static_cast<unsigned short>(port)});
-        std::cout << "WebSocket / HTTP server listening on port " << port << "...\n";
+        tcp::acceptor acceptor(ioc, {tcp::v4(), static_cast<unsigned short>(port)});
+        std::cout << "Listening on port " << port << "\n";
 
         while (true) {
-            tcp::socket socket(io_context);
+            tcp::socket socket(ioc);
             acceptor.accept(socket);
-
-            // Handle the connection in a separate thread
-            std::thread(
-                [sock = std::move(socket), &session_manager, &db]() mutable {
-                    do_session(std::move(sock), session_manager, db);
-                }
-            ).detach();
+            std::thread([sock = std::move(socket), &manager, &db]() mutable {
+                handle_connection(std::move(sock), manager, db);
+            }).detach();
         }
 
-    } catch (std::exception const& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Fatal: " << e.what() << "\n";
         return 1;
     }
     return 0;

@@ -41,7 +41,7 @@ public:
 
 private:
     // std::set<std::shared_ptr<websocket::stream<tcp::socket>>> sessions_;
-    std::mutex mutex_;
+    std::mutex mtx_;
     std::vector<ws_ptr> sockets_;
     std::unordered_map<ws_ptr, std::string> username_of_;
     std::unordered_map<ws_ptr, std::string> room_of_;

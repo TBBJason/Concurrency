@@ -6,6 +6,7 @@
     "boost-system",
     "boost-thread",
     "boost-beast",
-    "sqlite3"
+    "sqlite3",
+    "nlohmann-json"
   ]
 }
