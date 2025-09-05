@@ -1,4 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
+set(CMAKE_TOOLCHAIN_FILE "C:/Users/wujas/Desktop/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
+
 project(server LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -6,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Threads REQUIRED)
 find_package(SQLite3 REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 find_package(Boost 1.70 REQUIRED COMPONENTS system thread)
 
 add_executable(server
@@ -26,6 +29,7 @@ target_link_libraries(server PRIVATE
   Boost::thread
   SQLite::SQLite3
   Threads::Threads
+  nlohmann_json::nlohmann_json
 )
 
 # Put the built binary under /app/bin/ when we "cmake --install"
