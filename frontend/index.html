@@ -2,136 +2,273 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Concurrency Chat Demo</title>
+  <title>Concurrency Chat — Chatroom UI</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body { font-family: Arial, Helvetica, sans-serif; margin:0; padding:0; display:flex; height:100vh; }
-    #left { width: 260px; border-right:1px solid #ddd; padding:10px; box-sizing:border-box; }
-    #main { flex:1; display:flex; flex-direction:column; }
-    #messages { flex:1; overflow:auto; padding:10px; }
-    #input { padding:8px; border-top:1px solid #ddd; display:flex; }
-    #input input { flex:1; padding:8px; margin-right:8px; }
-    .msg { margin-bottom:8px; }
-    .me { font-weight:600; }
-    .user { cursor:pointer; padding:4px 2px; border-radius:4px; }
-    .user:hover { background:#f0f0f0; }
-    #login-modal { position:fixed; left:0; right:0; top:0; bottom:0; background:rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center; }
-    #login { background:#fff; padding:20px; border-radius:6px; width:320px; }
+    :root{
+      --bg: #0f1724; /* dark navy */
+      --panel: #0b1220;
+      --muted: #9aa4b2;
+      --accent: #6ee7b7;
+      --accent-2: #60a5fa;
+      --me-bg: #1f2937;
+      --bubble-left: #111827;
+      --bubble-right: linear-gradient(135deg,#0ea5a4,#7c3aed);
+      --card-radius: 14px;
+      --glass: rgba(255,255,255,0.03);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%; margin:0; font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; background: linear-gradient(180deg,#071021 0%, #061326 100%); color:#e6eef6}
+    .app{display:flex; height:100vh; gap:18px; padding:18px}
+
+    /* Left sidebar */
+    .sidebar{width:300px; background:var(--panel); border-radius:12px; padding:16px; display:flex; flex-direction:column; gap:12px; box-shadow: 0 6px 18px rgba(2,6,23,0.6)}
+    .sidebar h2{margin:0; font-size:16px}
+    .room-info{font-size:13px; color:var(--muted)}
+    .users-list{overflow:auto; padding-right:6px; display:flex; flex-direction:column; gap:8px}
+    .user-item{display:flex; gap:10px; align-items:center; padding:8px; border-radius:10px; cursor:pointer}
+    .user-item:hover{background:rgba(255,255,255,0.02)}
+    .avatar{width:40px; height:40px; border-radius:10px; object-fit:cover; background:linear-gradient(135deg,#2b3440,#1b2230); display:flex; align-items:center; justify-content:center; color:var(--muted); font-weight:600}
+    .user-name{font-size:14px}
+    .user-meta{font-size:12px; color:var(--muted)}
+
+    /* Main chat */
+    .chat{flex:1; display:flex; flex-direction:column; gap:12px}
+    .chat-header{display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:var(--glass); border-radius:12px}
+    .chat-body{background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent); padding:18px; border-radius:12px; flex:1; overflow:auto}
+    .messages{display:flex; flex-direction:column; gap:12px}
+
+    /* message row */
+    .message-row{display:flex; gap:10px; align-items:flex-end}
+    .message-row.me{flex-direction:row-reverse; align-items:flex-end}
+    .message-bubble{max-width:68%; padding:10px 12px; border-radius:12px; box-shadow: 0 6px 18px rgba(2,6,23,0.6); position:relative}
+    .message-bubble.left{background:var(--bubble-left); border:1px solid rgba(255,255,255,0.02)}
+    .message-bubble.right{background:var(--bubble-right); color:white}
+    .meta{font-size:12px; color:var(--muted); margin-bottom:6px}
+    .ts{font-size:11px; color:rgba(255,255,255,0.5); margin-left:8px}
+    .private-tag{font-size:11px; color:#ffd166; margin-left:6px}
+
+    /* input */
+    .composer{display:flex; gap:8px; padding:12px; background:var(--panel); border-radius:12px}
+    .composer textarea{flex:1; resize:none; padding:10px; min-height:44px; max-height:120px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); background:transparent; color:inherit}
+    .btn{background:linear-gradient(90deg,var(--accent),var(--accent-2)); border:none; padding:10px 14px; border-radius:10px; color:#04202a; font-weight:700; cursor:pointer}
+    .btn:active{transform:translateY(1px)}
+
+    /* join modal */
+    .modal-backdrop{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(2,6,23,0.6)}
+    .modal{background:var(--panel); padding:18px; border-radius:12px; width:360px}
+    .modal input{width:100%; padding:10px; margin-bottom:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); background:transparent; color:inherit}
+
+    /* small helpers */
+    .muted{color:var(--muted)}
+    .dot{width:10px;height:10px;border-radius:50%; background:#34d399; margin-left:6px}
+
+    /* avatar initials fallback */
+    .initials{display:flex; align-items:center; justify-content:center; width:40px; height:40px; border-radius:10px; background:linear-gradient(135deg,#0ea5a4,#7c3aed); color:white; font-weight:700}
+
+    @media (max-width:820px){
+      .app{flex-direction:column; padding:12px}
+      .sidebar{width:100%; order:2}
+      .chat{order:1}
+    }
   </style>
 </head>
 <body>
-  <div id="left">
-    <h3>Users (room)</h3>
-    <div id="users"></div>
-    <hr/>
-    <div>
-      <strong>Instructions</strong>
-      <p>Open this URL in two browsers (or incognito) and enter 2 different usernames to demo Person 1 / Person 2.</p>
-    </div>
+  <div class="app">
+    <aside class="sidebar">
+      <div style="display:flex; justify-content:space-between; align-items:center">
+        <div>
+          <h2>Lobby</h2>
+          <div class="room-info">Public room — everyone can join</div>
+        </div>
+        <div style="text-align:right; font-size:12px; color:var(--muted)">Chatroom Demo</div>
+      </div>
+
+      <div class="users-list" id="users"></div>
+
+      <div style="margin-top:auto; font-size:13px; color:var(--muted)">
+        <strong>How to demo</strong>
+        <p style="margin:6px 0 0">Open in two browsers (or incognito), pick different names and optionally paste an avatar image URL when joining.</p>
+      </div>
+    </aside>
+
+    <main class="chat">
+      <div class="chat-header">
+        <div>
+          <div style="font-weight:700"># lobby</div>
+          <div class="muted">Be kind — this is a demo</div>
+        </div>
+        <div id="me-info" style="display:flex; gap:10px; align-items:center"></div>
+      </div>
+
+      <div class="chat-body">
+        <div class="messages" id="messages"></div>
+      </div>
+
+      <div class="composer">
+        <textarea id="text" placeholder="Type a message — Shift+Enter for newline"></textarea>
+        <button id="send" class="btn">Send</button>
+      </div>
+    </main>
   </div>
 
-  <div id="main">
-    <div id="messages"></div>
-    <div id="input">
-      <input id="text" placeholder="Type a message..." />
-      <button id="send">Send</button>
-    </div>
-  </div>
-
-  <div id="login-modal">
-    <div id="login">
-      <h3>Join chat</h3>
-      <input id="username" placeholder="Your name" style="width:100%; padding:8px; margin-bottom:8px;" />
-      <button id="join" style="width:100%; padding:8px;">Join</button>
+  <!-- join modal -->
+  <div class="modal-backdrop" id="join-modal">
+    <div class="modal">
+      <h3 style="margin-top:0">Join chat</h3>
+      <input id="username" placeholder="Display name" />
+      <input id="avatar" placeholder="Avatar image URL (optional) — e.g. https://...jpg" />
+      <button id="join" class="btn" style="width:100%">Join</button>
     </div>
   </div>
 
 <script>
 (function(){
-  let ws;
-  let username = '';
-  const room = 'lobby';
   const usersEl = document.getElementById('users');
   const messagesEl = document.getElementById('messages');
-  const loginModal = document.getElementById('login-modal');
+  const joinModal = document.getElementById('join-modal');
+  const meInfo = document.getElementById('me-info');
+  const textEl = document.getElementById('text');
 
-  function appendMessage(user, text, ts, isPrivate=false) {
-    const el = document.createElement('div');
-    el.className = 'msg';
-    const who = document.createElement('div');
-    who.innerHTML = (user === username ? '<span class="me">You</span>' : '<strong>'+user+'</strong>') + (isPrivate ? ' <em>(private)</em>' : '');
-    const txt = document.createElement('div');
-    txt.textContent = text;
-    el.appendChild(who);
-    el.appendChild(txt);
-    messagesEl.appendChild(el);
+  let ws = null;
+  let username = localStorage.getItem('chat_username') || '';
+  let avatarUrl = localStorage.getItem('chat_avatar') || '';
+  const room = 'lobby';
+  const avatars = {}; // map username -> avatarUrl (client-side only)
+
+  // helpers
+  function timeStr(ts){ const d = new Date(ts); return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+  function initialsFor(name){ if(!name) return '?'; const parts = name.trim().split(/\s+/); if(parts.length===1) return parts[0].slice(0,2).toUpperCase(); return (parts[0][0]+parts[parts.length-1][0]).toUpperCase(); }
+
+  function makeAvatarEl(name, url, size=40){
+    if(url){
+      const img = document.createElement('img');
+      img.className = 'avatar';
+      img.src = url;
+      img.alt = name;
+      img.width = size; img.height = size;
+      img.onerror = function(){ // fallback to initials
+        const s = document.createElement('div'); s.className='initials'; s.textContent = initialsFor(name); s.style.width = size+'px'; s.style.height = size+'px'; s.style.borderRadius = '10px'; img.replaceWith(s);
+      };
+      return img;
+    } else {
+      const s = document.createElement('div'); s.className='initials'; s.textContent = initialsFor(name); s.style.width = size+'px'; s.style.height = size+'px'; s.style.borderRadius = '10px'; return s;
+    }
+  }
+
+  function appendMessage(user, text, ts, opts={private:false, avatar:null}){
+    const isMe = user === username;
+    const row = document.createElement('div'); row.className = 'message-row' + (isMe ? ' me' : '');
+
+    const avatarEl = makeAvatarEl(user, opts.avatar || avatars[user] || null, 44);
+    avatarEl.style.flex = '0 0 auto';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble ' + (isMe ? 'right' : 'left');
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.innerHTML = '<strong>' + (isMe? 'You' : escapeHtml(user)) + '</strong>' + (opts.private ? '<span class="private-tag"> (private)</span>' : '') + '<span class="ts">' + timeStr(ts) + '</span>';
+
+    const txt = document.createElement('div'); txt.style.whiteSpace = 'pre-wrap'; txt.textContent = text;
+
+    bubble.appendChild(meta);
+    bubble.appendChild(txt);
+
+    row.appendChild(avatarEl);
+    row.appendChild(bubble);
+
+    messagesEl.appendChild(row);
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  function setUsers(list) {
+  function escapeHtml(s){ return s.replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]; }); }
+
+  function setUsers(list){
     usersEl.innerHTML = '';
     list.forEach(u => {
-      const d = document.createElement('div');
-      d.className = 'user';
-      d.textContent = u;
-      d.onclick = () => {
-        const pm = prompt('Send private message to ' + u);
-        if (pm && pm.trim()) {
-          ws.send(JSON.stringify({type:'private', to: u, text: pm}));
-          appendMessage(username, pm, Date.now(), true);
+      const el = document.createElement('div'); el.className = 'user-item';
+      const img = makeAvatarEl(u, avatars[u] || null);
+      const name = document.createElement('div'); name.style.flex='1'; name.innerHTML = '<div class="user-name">'+escapeHtml(u)+'</div><div class="user-meta">online</div>';
+      el.appendChild(img);
+      el.appendChild(name);
+      el.onclick = () => {
+        const pm = prompt('Send private message to ' + u + (avatars[u] ? '\n(avatar: '+avatars[u]+')':''));
+        if(pm && pm.trim()){
+          try{ ws.send(JSON.stringify({type:'private', to:u, text: pm})); }
+          catch(e){ console.warn('ws send failed', e); }
+          appendMessage(username, pm, Date.now(), {private:true, avatar: avatars[username]});
         }
       };
-      usersEl.appendChild(d);
+      usersEl.appendChild(el);
     });
   }
 
-  function ensureWS() {
-    if (ws && ws.readyState === WebSocket.OPEN) return;
+  function ensureWS(){
+    if(ws && ws.readyState === WebSocket.OPEN) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(proto + '//' + location.host + '/');
-    ws.onopen = () => { console.log('ws open'); ws.send(JSON.stringify({type:'join', username: username, room: room})); };
+    ws.onopen = () => {
+      console.log('ws open');
+      try{ ws.send(JSON.stringify({type:'join', username: username, room: room, avatar: avatarUrl})); }catch(e){console.warn(e)}
+    };
     ws.onmessage = (evt) => {
-      const j = JSON.parse(evt.data);
-      if (j.type === 'joined') {
-        (j.recent || []).forEach(m => appendMessage(m.username, m.text, m.ts));
-      } else if (j.type === 'message') {
-        appendMessage(j.username, j.text, j.ts);
-      } else if (j.type === 'private') {
-        appendMessage(j.username, j.text, j.ts, true);
-      } else if (j.type === 'presence') {
-        setUsers(j.users);
-      } else if (j.type === 'list') {
-        setUsers(j.users);
+      let j; try{ j = JSON.parse(evt.data); }catch(e){ console.warn('invalid json', evt.data); return; }
+      if(j.type === 'joined'){
+        (j.recent || []).forEach(m => appendMessage(m.username, m.text, m.ts, {avatar: m.avatar}));
+      } else if(j.type === 'message'){
+        if(j.avatar) avatars[j.username] = j.avatar;
+        appendMessage(j.username, j.text, j.ts, {avatar: j.avatar});
+      } else if(j.type === 'private'){
+        if(j.avatar) avatars[j.username] = j.avatar;
+        appendMessage(j.username, j.text, j.ts, {private:true, avatar:j.avatar});
+      } else if(j.type === 'presence' || j.type === 'list'){
+        // server may include avatars in presence; merge them
+        if(Array.isArray(j.users)){
+          // if server sends objects with avatar: [{username, avatar}]
+          const users = j.users.map(u => {
+            if(typeof u === 'object' && u.username){ if(u.avatar) avatars[u.username] = u.avatar; return u.username; }
+            return u;
+          });
+          setUsers(users);
+        }
       }
     };
-    ws.onclose = () => setTimeout(() => { ws = null; }, 500);
+    ws.onclose = () => { console.log('ws closed'); setTimeout(()=>{ ws=null; }, 400); };
     ws.onerror = (e) => console.error('ws error', e);
   }
 
+  // join flow
   document.getElementById('join').onclick = () => {
     const name = document.getElementById('username').value.trim();
-    if (!name) return alert('Please enter a name');
-    username = name;
-    loginModal.style.display = 'none';
+    const av = document.getElementById('avatar').value.trim();
+    if(!name) return alert('Please enter a name');
+    username = name; avatarUrl = av || '';
+    localStorage.setItem('chat_username', username); localStorage.setItem('chat_avatar', avatarUrl);
+    if(avatarUrl) avatars[username] = avatarUrl;
+    document.getElementById('join-modal').style.display = 'none';
+    meInfo.innerHTML = '';
+    const meAv = makeAvatarEl(username, avatarUrl, 36); meInfo.appendChild(meAv);
+    const meName = document.createElement('div'); meName.innerHTML = '<div style="font-weight:700">'+escapeHtml(username)+'</div><div class="muted" style="font-size:12px">you</div>'; meInfo.appendChild(meName);
     ensureWS();
   };
 
+  // allow Enter to send; Shift+Enter newline
+  textEl.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); document.getElementById('send').click(); }
+  });
+
   document.getElementById('send').onclick = () => {
-    const t = document.getElementById('text');
-    const text = t.value.trim();
-    if (!text) return;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      alert('Not connected yet');
-      return;
-    }
-    ws.send(JSON.stringify({type:'message', text: text}));
-    appendMessage(username, text, Date.now());
-    t.value = '';
+    const txt = textEl.value.trim(); if(!txt) return; if(!ws || ws.readyState !== WebSocket.OPEN){ alert('Not connected yet'); return; }
+    try{ ws.send(JSON.stringify({type:'message', text: txt})); }catch(e){ console.warn(e); }
+    appendMessage(username, txt, Date.now(), {avatar: avatarUrl});
+    textEl.value = '';
   };
 
-  // allow Enter to send
-  document.getElementById('text').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') document.getElementById('send').click();
-  });
+  // If we already had a name in localStorage, auto-fill modal and auto-join
+  if(username){ document.getElementById('username').value = username; document.getElementById('avatar').value = avatarUrl; }
+  // show modal until joined
+  // (user can click join to proceed)
 
 })();
 </script>
