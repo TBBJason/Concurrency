@@ -225,7 +225,7 @@ void handle_connection(tcp::socket socket, SessionManager& manager, Database& db
 
                 // broadcast presence (dump into string for manager)
                 json pres = { {"type","presence"}, {"users", manager.list_users(room)} };
-                manager.broadcast(room, pres.dump());
+                manager.broadcast(room, pres.dump(), ws);
 
             } else if (type == "message") {
                 if (!j.contains("text") || !j["text"].is_string()) {
@@ -247,7 +247,7 @@ void handle_connection(tcp::socket socket, SessionManager& manager, Database& db
                     {"text", text},
                     {"ts", ts}
                 };
-                manager.broadcast(room, out.dump());
+                manager.broadcast(room, out.dump(), ws);
 
             } else if (type == "private") {
                 if (!j.contains("to") || !j["to"].is_string()

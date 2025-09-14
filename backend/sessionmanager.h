@@ -38,7 +38,7 @@ public:
     void set_username(ws_ptr ws, const std::string& username);
     void set_room(ws_ptr ws, const std::string& room);
     std::vector<std::string> list_users(const std::string& room);
-    void broadcast(const std::string& room, const std::string& message);
+    void broadcast(const std::string& room, const std::string& message, const ws_ptr exclude = nullptr);
     void send_to_user(const std::string& username, const std::string& message);
 
 private:

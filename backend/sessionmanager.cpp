@@ -60,7 +60,7 @@ std::vector<std::string> SessionManager::list_users(const std::string& room) {
     return out;
 }
 
-void SessionManager::broadcast(const std::string& room, const std::string& message) {
+void SessionManager::broadcast(const std::string& room, const std::string& message, const ws_ptr exclude) {
     std::vector<ws_ptr> targets;
     {
         std::lock_guard<std::mutex> lock(mtx_);
@@ -69,6 +69,7 @@ void SessionManager::broadcast(const std::string& room, const std::string& messa
         for (void* key : it->second) {
             auto sit = sessions_.find(key);
             if (sit != sessions_.end()) targets.push_back(sit->second.ws);
+            if (exclude && sit->second.ws == exclude) continue;
         }
     }
 
