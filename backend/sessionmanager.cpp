@@ -68,8 +68,8 @@ void SessionManager::broadcast(const std::string& room, const std::string& messa
         if (it == rooms_.end()) return;
         for (void* key : it->second) {
             auto sit = sessions_.find(key);
-            if (sit != sessions_.end()) targets.push_back(sit->second.ws);
             if (exclude && sit->second.ws == exclude) continue;
+            if (sit != sessions_.end()) targets.push_back(sit->second.ws);
         }
     }
 
